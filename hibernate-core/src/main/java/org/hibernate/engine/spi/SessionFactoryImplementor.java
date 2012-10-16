@@ -51,7 +51,7 @@ import org.hibernate.id.IdentifierGenerator;
 import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.proxy.EntityNotFoundDelegate;
-import org.hibernate.service.jdbc.connections.spi.ConnectionProvider;
+import org.hibernate.engine.jdbc.connections.spi.ConnectionProvider;
 import org.hibernate.service.spi.ServiceRegistryImplementor;
 import org.hibernate.stat.spi.StatisticsImplementor;
 import org.hibernate.type.Type;
@@ -93,6 +93,13 @@ public interface SessionFactoryImplementor extends Mapping, SessionFactory {
 	public EntityPersister getEntityPersister(String entityName) throws MappingException;
 
 	/**
+	 * Get all entity persisters as a Map, which entity name its the key and the persister is the value.
+	 *
+	 * @return The Map contains all entity persisters.
+	 */
+	public Map<String,EntityPersister> getEntityPersisters();
+
+	/**
 	 * Get the persister object for a collection role.
 	 *
 	 * @param role The role (name) of the collection for which to retrieve the
@@ -101,6 +108,13 @@ public interface SessionFactoryImplementor extends Mapping, SessionFactory {
 	 * @throws MappingException Indicates persister could not be found with that role.
 	 */
 	public CollectionPersister getCollectionPersister(String role) throws MappingException;
+
+	/**
+	 * Get all collection persisters as a Map, which collection role as the key and the persister is the value.
+	 *
+	 * @return The Map contains all collection persisters.
+	 */
+	public Map<String, CollectionPersister> getCollectionPersisters();
 
 	/**
 	 * Get the JdbcServices.
@@ -138,7 +152,13 @@ public interface SessionFactoryImplementor extends Mapping, SessionFactory {
 
 	/**
 	 * Get the connection provider
+	 *
+	 * @deprecated Access to connections via {@link org.hibernate.engine.jdbc.spi.JdbcConnectionAccess} should
+	 * be preferred over access via {@link ConnectionProvider}, whenever possible.
+	 * {@link org.hibernate.engine.jdbc.spi.JdbcConnectionAccess} is tied to the Hibernate Session to
+	 * properly account for contextual information.  See {@link SessionImplementor#getJdbcConnectionAccess()}
 	 */
+	@Deprecated
 	public ConnectionProvider getConnectionProvider();
 	/**
 	 * Get the names of all persistent classes that implement/extend the given interface/class
@@ -170,7 +190,13 @@ public interface SessionFactoryImplementor extends Mapping, SessionFactory {
 	public StatisticsImplementor getStatisticsImplementor();
 
 	public NamedQueryDefinition getNamedQuery(String queryName);
+
+	public void registerNamedQueryDefinition(String name, NamedQueryDefinition definition);
+
 	public NamedSQLQueryDefinition getNamedSQLQuery(String queryName);
+
+	public void registerNamedSQLQueryDefinition(String name, NamedSQLQueryDefinition definition);
+
 	public ResultSetMappingDefinition getResultSetMapping(String name);
 
 	/**

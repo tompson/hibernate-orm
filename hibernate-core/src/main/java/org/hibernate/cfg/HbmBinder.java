@@ -24,6 +24,7 @@
 package org.hibernate.cfg;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -44,6 +45,7 @@ import org.hibernate.engine.internal.Versioning;
 import org.hibernate.engine.spi.ExecuteUpdateResultCheckStyle;
 import org.hibernate.engine.spi.FilterDefinition;
 import org.hibernate.engine.spi.NamedQueryDefinition;
+import org.hibernate.engine.spi.NamedQueryDefinitionBuilder;
 import org.hibernate.id.PersistentIdentifierGenerator;
 import org.hibernate.internal.CoreMessageLogger;
 import org.hibernate.internal.util.ReflectHelper;
@@ -94,6 +96,7 @@ import org.hibernate.mapping.TypeDef;
 import org.hibernate.mapping.UnionSubclass;
 import org.hibernate.mapping.UniqueKey;
 import org.hibernate.mapping.Value;
+import org.hibernate.type.BasicType;
 import org.hibernate.type.DiscriminatorType;
 import org.hibernate.type.ForeignKeyDirection;
 import org.hibernate.type.Type;
@@ -1211,6 +1214,11 @@ public final class HbmBinder {
 			}
 		}
 
+		resolveAndBindTypeDef(simpleValue, mappings, typeName, parameters);
+	}
+
+	private static void resolveAndBindTypeDef(SimpleValue simpleValue,
+			Mappings mappings, String typeName, Properties parameters) {
 		TypeDef typeDef = mappings.getTypeDef( typeName );
 		if ( typeDef != null ) {
 			typeName = typeDef.getTypeClass();
@@ -1220,6 +1228,19 @@ public final class HbmBinder {
 			allParameters.putAll( typeDef.getParameters() );
 			allParameters.putAll( parameters );
 			parameters = allParameters;
+		}else if (typeName!=null && !mappings.isInSecondPass()){
+			BasicType basicType=mappings.getTypeResolver().basic(typeName);
+			if (basicType==null) {
+				/*
+				 * If the referenced typeName isn't a basic-type, it's probably a typedef defined 
+				 * in a mapping file not read yet.
+				 * It should be solved by deferring the resolution and binding of this type until 
+				 * all mapping files are read - the second passes.
+				 * Fixes issue HHH-7300
+				 */
+				SecondPass resolveUserTypeMappingSecondPass=new ResolveUserTypeMappingSecondPass(simpleValue,typeName,mappings,parameters);
+				mappings.addSecondPass(resolveUserTypeMappingSecondPass);
+			}
 		}
 
 		if ( !parameters.isEmpty() ) simpleValue.setTypeParameters( parameters );
@@ -1565,11 +1586,11 @@ public final class HbmBinder {
 	) {
 		if ( "no-proxy".equals( node.attributeValue( "lazy" ) ) ) {
 			fetchable.setUnwrapProxy(true);
-			fetchable.setLazy(true);
+			fetchable.setLazy( true );
 			//TODO: better to degrade to lazy="false" if uninstrumented
 		}
 		else {
-			initLaziness(node, fetchable, mappings, "proxy", defaultLazy);
+			initLaziness( node, fetchable, mappings, "proxy", defaultLazy );
 		}
 	}
 
@@ -1781,7 +1802,7 @@ public final class HbmBinder {
 				mappings,
 				inheritedMetas,
 				false
-			);
+		);
 	}
 
 	public static void bindCompositeId(Element node, Component component,
@@ -2331,7 +2352,7 @@ public final class HbmBinder {
 				list.isOneToMany(),
 				IndexedCollection.DEFAULT_INDEX_COLUMN_NAME,
 				mappings
-			);
+		);
 		iv.setTypeName( "integer" );
 		list.setIndex( iv );
 		String baseIndex = subnode.attributeValue( "base" );
@@ -2622,34 +2643,18 @@ public final class HbmBinder {
 			if ( condition==null) {
 				throw new MappingException("no filter condition found for filter: " + name);
 			}
+			Iterator aliasesIterator = filterElement.elementIterator("aliases");
+			java.util.Map<String, String> aliasTables = new HashMap<String, String>();
+			while (aliasesIterator.hasNext()){
+				Element alias = (Element) aliasesIterator.next();
+				aliasTables.put(alias.attributeValue("alias"), alias.attributeValue("table"));
+			}
 			if ( LOG.isDebugEnabled() ) {
 				LOG.debugf( "Applying many-to-many filter [%s] as [%s] to role [%s]", name, condition, collection.getRole() );
 			}
-			collection.addManyToManyFilter( name, condition );
-		}
-	}
-
-	public static final FlushMode getFlushMode(String flushMode) {
-		if ( flushMode == null ) {
-			return null;
-		}
-		else if ( "auto".equals( flushMode ) ) {
-			return FlushMode.AUTO;
-		}
-		else if ( "commit".equals( flushMode ) ) {
-			return FlushMode.COMMIT;
-		}
-		else if ( "never".equals( flushMode ) ) {
-			return FlushMode.NEVER;
-		}
-		else if ( "manual".equals( flushMode ) ) {
-			return FlushMode.MANUAL;
-		}
-		else if ( "always".equals( flushMode ) ) {
-			return FlushMode.ALWAYS;
-		}
-		else {
-			throw new MappingException( "unknown flushmode" );
+			String autoAliasInjectionText = filterElement.attributeValue("autoAliasInjection");
+			boolean autoAliasInjection = StringHelper.isEmpty(autoAliasInjectionText) ? true : Boolean.parseBoolean(autoAliasInjectionText);
+			collection.addManyToManyFilter(name, condition, autoAliasInjection, aliasTables, null);
 		}
 	}
 
@@ -2672,31 +2677,20 @@ public final class HbmBinder {
 		Attribute cmAtt = queryElem.attribute( "comment" );
 		String comment = cmAtt == null ? null : cmAtt.getValue();
 
-		NamedQueryDefinition namedQuery = new NamedQueryDefinition(
-				queryName,
-				query,
-				cacheable,
-				region,
-				timeout,
-				fetchSize,
-				getFlushMode( queryElem.attributeValue( "flush-mode" ) ) ,
-				getCacheMode( cacheMode ),
-				readOnly,
-				comment,
-				getParameterTypes(queryElem)
-			);
+		NamedQueryDefinition namedQuery = new NamedQueryDefinitionBuilder().setName( queryName )
+				.setQuery( query )
+				.setCacheable( cacheable )
+				.setCacheRegion( region )
+				.setTimeout( timeout )
+				.setFetchSize( fetchSize )
+				.setFlushMode( FlushMode.interpretExternalSetting( queryElem.attributeValue( "flush-mode" ) ) )
+				.setCacheMode( CacheMode.interpretExternalSetting( cacheMode ) )
+				.setReadOnly( readOnly )
+				.setComment( comment )
+				.setParameterTypes( getParameterTypes( queryElem ) )
+				.createNamedQueryDefinition();
 
 		mappings.addQuery( namedQuery.getName(), namedQuery );
-	}
-
-	public static CacheMode getCacheMode(String cacheMode) {
-		if (cacheMode == null) return null;
-		if ( "get".equals( cacheMode ) ) return CacheMode.GET;
-		if ( "ignore".equals( cacheMode ) ) return CacheMode.IGNORE;
-		if ( "normal".equals( cacheMode ) ) return CacheMode.NORMAL;
-		if ( "put".equals( cacheMode ) ) return CacheMode.PUT;
-		if ( "refresh".equals( cacheMode ) ) return CacheMode.REFRESH;
-		throw new MappingException("Unknown Cache Mode: " + cacheMode);
 	}
 
 	public static java.util.Map getParameterTypes(Element queryElem) {
@@ -3030,8 +3024,16 @@ public final class HbmBinder {
 		if ( condition==null) {
 			throw new MappingException("no filter condition found for filter: " + name);
 		}
+		Iterator aliasesIterator = filterElement.elementIterator("aliases");
+		java.util.Map<String, String> aliasTables = new HashMap<String, String>();
+		while (aliasesIterator.hasNext()){
+			Element alias = (Element) aliasesIterator.next();
+			aliasTables.put(alias.attributeValue("alias"), alias.attributeValue("table"));
+		}
 		LOG.debugf( "Applying filter [%s] as [%s]", name, condition );
-		filterable.addFilter( name, condition );
+		String autoAliasInjectionText = filterElement.attributeValue("autoAliasInjection");
+		boolean autoAliasInjection = StringHelper.isEmpty(autoAliasInjectionText) ? true : Boolean.parseBoolean(autoAliasInjectionText);
+		filterable.addFilter(name, condition, autoAliasInjection, aliasTables, null);
 	}
 
 	private static void parseFetchProfile(Element element, Mappings mappings, String containingEntityName) {
@@ -3165,5 +3167,28 @@ public final class HbmBinder {
 
 	private static interface EntityElementHandler {
 		public void handleEntity(String entityName, String className, Mappings mappings);
+	}
+	
+	private static class ResolveUserTypeMappingSecondPass implements SecondPass{
+
+		private SimpleValue simpleValue;
+		private String typeName;
+		private Mappings mappings;
+		private Properties parameters;
+
+		public ResolveUserTypeMappingSecondPass(SimpleValue simpleValue,
+				String typeName, Mappings mappings, Properties parameters) {
+			this.simpleValue=simpleValue;
+			this.typeName=typeName;
+			this.parameters=parameters;
+			this.mappings=mappings;
+		}
+
+		@Override
+		public void doSecondPass(java.util.Map persistentClasses)
+				throws MappingException {
+			resolveAndBindTypeDef(simpleValue, mappings, typeName, parameters);		
+		}
+		
 	}
 }

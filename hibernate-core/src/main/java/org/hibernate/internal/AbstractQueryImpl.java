@@ -49,6 +49,7 @@ import org.hibernate.PropertyNotFoundException;
 import org.hibernate.Query;
 import org.hibernate.QueryException;
 import org.hibernate.Session;
+import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.query.spi.ParameterMetadata;
 import org.hibernate.engine.spi.QueryParameters;
 import org.hibernate.engine.spi.RowSelection;
@@ -65,6 +66,7 @@ import org.hibernate.transform.ResultTransformer;
 import org.hibernate.type.SerializableType;
 import org.hibernate.type.StandardBasicTypes;
 import org.hibernate.type.Type;
+import org.jboss.logging.Logger;
 
 /**
  * Abstract implementation of the Query interface.
@@ -73,6 +75,10 @@ import org.hibernate.type.Type;
  * @author Max Andersen
  */
 public abstract class AbstractQueryImpl implements Query {
+	private static final CoreMessageLogger log = Logger.getMessageLogger(
+			CoreMessageLogger.class,
+			AbstractQueryImpl.class.getName()
+	);
 
 	private static final Object UNSET_PARAMETER = new MarkerObject("<unset parameter>");
 	private static final Object UNSET_TYPE = new MarkerObject("<unset type>");
@@ -120,54 +126,90 @@ public abstract class AbstractQueryImpl implements Query {
 		return parameterMetadata;
 	}
 
+	@Override
 	public String toString() {
 		return StringHelper.unqualify( getClass().getName() ) + '(' + queryString + ')';
 	}
 
+	@Override
 	public final String getQueryString() {
 		return queryString;
 	}
 
-	//TODO: maybe call it getRowSelection() ?
-	public RowSelection getSelection() {
-		return selection;
-	}
-	
-	public Query setFlushMode(FlushMode flushMode) {
-		this.flushMode = flushMode;
-		return this;
-	}
-	
-	public Query setCacheMode(CacheMode cacheMode) {
-		this.cacheMode = cacheMode;
-		return this;
+	@Override
+	public boolean isCacheable() {
+		return cacheable;
 	}
 
-	public CacheMode getCacheMode() {
-		return cacheMode;
-	}
-
+	@Override
 	public Query setCacheable(boolean cacheable) {
 		this.cacheable = cacheable;
 		return this;
 	}
 
+	@Override
+	public String getCacheRegion() {
+		return cacheRegion;
+	}
+
+	@Override
 	public Query setCacheRegion(String cacheRegion) {
-		if (cacheRegion != null)
+		if (cacheRegion != null) {
 			this.cacheRegion = cacheRegion.trim();
+		}
 		return this;
 	}
 
+	@Override
+	public FlushMode getFlushMode() {
+		return flushMode;
+	}
+
+	@Override
+	public Query setFlushMode(FlushMode flushMode) {
+		this.flushMode = flushMode;
+		return this;
+	}
+
+	@Override
+	public CacheMode getCacheMode() {
+		return cacheMode;
+	}
+
+	@Override
+	public Query setCacheMode(CacheMode cacheMode) {
+		this.cacheMode = cacheMode;
+		return this;
+	}
+
+	@Override
+	public String getComment() {
+		return comment;
+	}
+
+	@Override
 	public Query setComment(String comment) {
 		this.comment = comment;
 		return this;
 	}
 
+	@Override
+	public Integer getFirstResult() {
+		return selection.getFirstRow();
+	}
+
+	@Override
 	public Query setFirstResult(int firstResult) {
 		selection.setFirstRow( firstResult);
 		return this;
 	}
 
+	@Override
+	public Integer getMaxResults() {
+		return selection.getMaxRows();
+	}
+
+	@Override
 	public Query setMaxResults(int maxResults) {
 		if ( maxResults < 0 ) {
 			// treat negatives specically as meaning no limit...
@@ -179,10 +221,23 @@ public abstract class AbstractQueryImpl implements Query {
 		return this;
 	}
 
+	@Override
+	public Integer getTimeout() {
+		return selection.getTimeout();
+	}
+
+	@Override
 	public Query setTimeout(int timeout) {
 		selection.setTimeout( timeout);
 		return this;
 	}
+
+	@Override
+	public Integer getFetchSize() {
+		return selection.getFetchSize();
+	}
+
+	@Override
 	public Query setFetchSize(int fetchSize) {
 		selection.setFetchSize( fetchSize);
 		return this;
@@ -749,6 +804,15 @@ public abstract class AbstractQueryImpl implements Query {
 	 */
 	private String expandParameterList(String query, String name, TypedValue typedList, Map namedParamsCopy) {
 		Collection vals = (Collection) typedList.getValue();
+		
+		// HHH-1123
+		// Some DBs limit number of IN expressions.  For now, warn...
+		final Dialect dialect = session.getFactory().getDialect();
+		final int inExprLimit = dialect.getInExpressionCountLimit();
+		if ( inExprLimit > 0 && vals.size() > inExprLimit ) {
+			log.tooManyInExpressions( dialect.getClass().getName(), inExprLimit, name, vals.size() );
+		}
+
 		Type type = typedList.getType();
 
 		boolean isJpaPositionalParam = parameterMetadata.getNamedParameterDescriptor( name ).isJpaStyle();
@@ -920,7 +984,7 @@ public abstract class AbstractQueryImpl implements Query {
 				valueArray(),
 				namedParams,
 				getLockOptions(),
-				getSelection(),
+				getRowSelection(),
 				true,
 				isReadOnly(),
 				cacheable,

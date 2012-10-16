@@ -53,6 +53,7 @@ import javax.persistence.Id;
 import javax.persistence.IdClass;
 import javax.persistence.InheritanceType;
 import javax.persistence.JoinColumn;
+import javax.persistence.JoinColumns;
 import javax.persistence.JoinTable;
 import javax.persistence.ManyToMany;
 import javax.persistence.ManyToOne;
@@ -279,6 +280,7 @@ public final class AnnotationBinder {
 		bindTypeDefs( pckg, mappings );
 		bindFetchProfiles( pckg, mappings );
 		BinderHelper.bindAnyMetaDefs( pckg, mappings );
+
 	}
 
 	private static void bindGenericGenerators(XAnnotatedElement annotatedElement, Mappings mappings) {
@@ -578,10 +580,7 @@ public final class AnnotationBinder {
 	    entityBinder.setCache( determineCacheSettings( clazzToProcess, mappings ) );
 	    entityBinder.setNaturalIdCache( clazzToProcess, clazzToProcess.getAnnotation( NaturalIdCache.class ) );
 
-		//Filters are not allowed on subclasses
-		if ( !inheritanceState.hasParents() ) {
-			bindFilters( clazzToProcess, entityBinder, mappings );
-		}
+		bindFilters( clazzToProcess, entityBinder, mappings );
 
 		entityBinder.bindEntity();
 
@@ -1208,13 +1207,13 @@ public final class AnnotationBinder {
 		Filters filtersAnn = annotatedElement.getAnnotation( Filters.class );
 		if ( filtersAnn != null ) {
 			for ( Filter filter : filtersAnn.value() ) {
-				entityBinder.addFilter( filter.name(), filter.condition() );
+				entityBinder.addFilter(filter);
 			}
 		}
 
 		Filter filterAnn = annotatedElement.getAnnotation( Filter.class );
 		if ( filterAnn != null ) {
-			entityBinder.addFilter( filterAnn.name(), filterAnn.condition() );
+			entityBinder.addFilter(filterAnn);
 		}
 	}
 
@@ -1395,17 +1394,42 @@ public final class AnnotationBinder {
 				if ( element.isAnnotationPresent( Id.class ) && element.isAnnotationPresent( Column.class ) ) {
 					String columnName = element.getAnnotation( Column.class ).name();
 					for ( XProperty prop : declaringClass.getDeclaredProperties( AccessType.FIELD.getType() ) ) {
-						if ( prop.isAnnotationPresent( JoinColumn.class )
-								&& prop.getAnnotation( JoinColumn.class ).name().equals( columnName )
-								&& !prop.isAnnotationPresent( MapsId.class ) ) {
-							//create a PropertyData fpr the specJ property holding the mapping
-							PropertyData specJPropertyData = new PropertyInferredData(
-									declaringClass,  //same dec
-									prop, // the actual @XToOne property
-									propertyAccessor, //TODO we should get the right accessor but the same as id would do
-									mappings.getReflectionManager()
-							);
-							mappings.addPropertyAnnotatedWithMapsIdSpecj( entity, specJPropertyData, element.toString() );
+						if ( !prop.isAnnotationPresent( MapsId.class ) ) {
+							/**
+							 * The detection of a configured individual JoinColumn differs between Annotation
+							 * and XML configuration processing.
+							 */
+							boolean isRequiredAnnotationPresent = false;
+							JoinColumns groupAnnotation = prop.getAnnotation( JoinColumns.class );
+							if ( (prop.isAnnotationPresent( JoinColumn.class )
+									&& prop.getAnnotation( JoinColumn.class ).name().equals( columnName )) ) {
+								isRequiredAnnotationPresent = true;
+							}
+							else if ( prop.isAnnotationPresent( JoinColumns.class ) ) {
+								for ( JoinColumn columnAnnotation : groupAnnotation.value() ) {
+									if ( columnName.equals( columnAnnotation.name() ) ) {
+										isRequiredAnnotationPresent = true;
+										break;
+									}
+								}
+							}
+							if ( isRequiredAnnotationPresent ) {
+								//create a PropertyData fpr the specJ property holding the mapping
+								PropertyData specJPropertyData = new PropertyInferredData(
+										declaringClass,
+										//same dec
+										prop,
+										// the actual @XToOne property
+										propertyAccessor,
+										//TODO we should get the right accessor but the same as id would do
+										mappings.getReflectionManager()
+								);
+								mappings.addPropertyAnnotatedWithMapsIdSpecj(
+										entity,
+										specJPropertyData,
+										element.toString()
+								);
+							}
 						}
 					}
 				}
@@ -2497,7 +2521,8 @@ public final class AnnotationBinder {
 			value.setColumns( columns );
 			value.setPersistentClassName( persistentClassName );
 			value.setMappings( mappings );
-			value.setType( inferredData.getProperty(), inferredData.getClassOrElement() );
+			value.setType( inferredData.getProperty(), inferredData.getClassOrElement(), persistentClassName );
+			value.setAccessType( propertyAccessor );
 			id = value.make();
 		}
 		rootClass.setIdentifier( id );
@@ -2734,7 +2759,8 @@ public final class AnnotationBinder {
 			boolean cascadeOnDelete,
 			XClass targetEntity,
 			PropertyHolder propertyHolder,
-			PropertyData inferredData, String mappedBy,
+			PropertyData inferredData,
+			String mappedBy,
 			boolean trueOneToOne,
 			boolean isIdentifierMapper,
 			boolean inSecondPass,

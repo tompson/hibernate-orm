@@ -48,8 +48,10 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
+import javax.persistence.AttributeConverter;
 import javax.persistence.Embeddable;
 import javax.persistence.Entity;
 import javax.persistence.MapsId;
@@ -63,6 +65,7 @@ import org.xml.sax.EntityResolver;
 import org.xml.sax.InputSource;
 
 import org.hibernate.AnnotationException;
+import org.hibernate.AssertionFailure;
 import org.hibernate.DuplicateMappingException;
 import org.hibernate.EmptyInterceptor;
 import org.hibernate.HibernateException;
@@ -78,6 +81,7 @@ import org.hibernate.annotations.common.reflection.MetadataProviderInjector;
 import org.hibernate.annotations.common.reflection.ReflectionManager;
 import org.hibernate.annotations.common.reflection.XClass;
 import org.hibernate.annotations.common.reflection.java.JavaReflectionManager;
+import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.cfg.annotations.reflection.JPAMetadataProvider;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
 import org.hibernate.dialect.Dialect;
@@ -133,8 +137,7 @@ import org.hibernate.mapping.UniqueKey;
 import org.hibernate.proxy.EntityNotFoundDelegate;
 import org.hibernate.secure.internal.JACCConfiguration;
 import org.hibernate.service.ServiceRegistry;
-import org.hibernate.service.ServiceRegistryBuilder;
-import org.hibernate.service.internal.StandardServiceRegistryImpl;
+import org.hibernate.boot.registry.internal.StandardServiceRegistryImpl;
 import org.hibernate.tool.hbm2ddl.DatabaseMetadata;
 import org.hibernate.tool.hbm2ddl.IndexMetadata;
 import org.hibernate.tool.hbm2ddl.TableMetadata;
@@ -160,7 +163,7 @@ import org.hibernate.usertype.UserType;
  * A new <tt>Configuration</tt> will use the properties specified in
  * <tt>hibernate.properties</tt> by default.
  * <p/>
- * NOTE : This will be replaced by use of {@link ServiceRegistryBuilder} and
+ * NOTE : This will be replaced by use of {@link org.hibernate.boot.registry.StandardServiceRegistryBuilder} and
  * {@link org.hibernate.metamodel.MetadataSources} instead after the 4.0 release at which point this class will become
  * deprecated and scheduled for removal in 5.0.  See
  * <a href="http://opensource.atlassian.com/projects/hibernate/browse/HHH-6183">HHH-6183</a>,
@@ -259,6 +262,7 @@ public class Configuration implements Serializable {
 	private CurrentTenantIdentifierResolver currentTenantIdentifierResolver;
 	private boolean specjProprietarySyntaxEnabled;
 
+	private ConcurrentHashMap<Class,AttributeConverterDefinition> attributeConverterDefinitionsByClass;
 
 	protected Configuration(SettingsFactory settingsFactory) {
 		this.settingsFactory = settingsFactory;
@@ -1341,18 +1345,7 @@ public class Configuration implements Serializable {
 			metadataSourceQueue.processMetadata( determineMetadataSourcePrecedence() );
 		}
 
-		// process cache queue
-		{
-			for ( CacheHolder holder : caches ) {
-				if ( holder.isClass ) {
-					applyCacheConcurrencyStrategy( holder );
-				}
-				else {
-					applyCollectionCacheConcurrencyStrategy( holder );
-				}
-			}
-			caches.clear();
-		}
+
 
 		try {
 			inSecondPass = true;
@@ -1370,6 +1363,19 @@ public class Configuration implements Serializable {
 		catch ( RecoverableException e ) {
 			//the exception was not recoverable after all
 			throw ( RuntimeException ) e.getCause();
+		}
+
+		// process cache queue
+		{
+			for ( CacheHolder holder : caches ) {
+				if ( holder.isClass ) {
+					applyCacheConcurrencyStrategy( holder );
+				}
+				else {
+					applyCollectionCacheConcurrencyStrategy( holder );
+				}
+			}
+			caches.clear();
 		}
 
 		for ( Map.Entry<Table, List<UniqueConstraintHolder>> tableListEntry : uniqueConstraintHoldersByTable.entrySet() ) {
@@ -1419,7 +1425,7 @@ public class Configuration implements Serializable {
 			if ( sp.isInPrimaryKey() ) {
 				String referenceEntityName = sp.getReferencedEntityName();
 				PersistentClass classMapping = getClassMapping( referenceEntityName );
-				String dependentTable = classMapping.getTable().getQuotedName();
+				String dependentTable = quotedTableName(classMapping.getTable());
 				if ( !isADependencyOf.containsKey( dependentTable ) ) {
 					isADependencyOf.put( dependentTable, new HashSet<FkSecondPass>() );
 				}
@@ -1489,7 +1495,7 @@ public class Configuration implements Serializable {
 		}
 
 		for ( FkSecondPass sp : dependencies ) {
-			String dependentTable = sp.getValue().getTable().getQuotedName();
+			String dependentTable = quotedTableName(sp.getValue().getTable());
 			if ( dependentTable.compareTo( startTable ) == 0 ) {
 				StringBuilder sb = new StringBuilder(
 						"Foreign key circularity dependency involving the following tables: "
@@ -1501,6 +1507,10 @@ public class Configuration implements Serializable {
 				orderedFkSecondPasses.add( 0, sp );
 			}
 		}
+	}
+
+	private String quotedTableName(Table table) {
+		return Table.qualify( table.getCatalog(), table.getQuotedSchema(), table.getQuotedName() );
 	}
 
 	private void processEndOfQueue(List<FkSecondPass> endOfQueueFkSecondPasses) {
@@ -1764,7 +1774,7 @@ public class Configuration implements Serializable {
 	public SessionFactory buildSessionFactory() throws HibernateException {
 		Environment.verifyProperties( properties );
 		ConfigurationHelper.resolvePlaceHolders( properties );
-		final ServiceRegistry serviceRegistry =  new ServiceRegistryBuilder()
+		final ServiceRegistry serviceRegistry =  new StandardServiceRegistryBuilder()
 				.applySettings( properties )
 				.buildServiceRegistry();
 		setSessionFactoryObserver(
@@ -2450,6 +2460,52 @@ public class Configuration implements Serializable {
 		this.currentTenantIdentifierResolver = currentTenantIdentifierResolver;
 	}
 
+	/**
+	 * Adds the AttributeConverter Class to this Configuration.
+	 *
+	 * @param attributeConverterClass The AttributeConverter class.
+	 * @param autoApply Should the AttributeConverter be auto applied to property types as specified
+	 * by its "entity attribute" parameterized type?
+	 */
+	public void addAttributeConverter(Class<? extends AttributeConverter> attributeConverterClass, boolean autoApply) {
+		final AttributeConverter attributeConverter;
+		try {
+			attributeConverter = attributeConverterClass.newInstance();
+		}
+		catch (Exception e) {
+			throw new AnnotationException(
+					"Unable to instantiate AttributeConverter [" + attributeConverterClass.getName() + "]"
+			);
+		}
+		addAttributeConverter( attributeConverter, autoApply );
+	}
+
+	/**
+	 * Adds the AttributeConverter instance to this Configuration.  This form is mainly intended for developers
+	 * to programatically add their own AttributeConverter instance.  HEM, instead, uses the
+	 * {@link #addAttributeConverter(Class, boolean)} form
+	 *
+	 * @param attributeConverter The AttributeConverter instance.
+	 * @param autoApply Should the AttributeConverter be auto applied to property types as specified
+	 * by its "entity attribute" parameterized type?
+	 */
+	public void addAttributeConverter(AttributeConverter attributeConverter, boolean autoApply) {
+		if ( attributeConverterDefinitionsByClass == null ) {
+			attributeConverterDefinitionsByClass = new ConcurrentHashMap<Class, AttributeConverterDefinition>();
+		}
+
+		final Object old = attributeConverterDefinitionsByClass.put(
+				attributeConverter.getClass(),
+				new AttributeConverterDefinition( attributeConverter, autoApply )
+		);
+
+		if ( old != null ) {
+			throw new AssertionFailure(
+					"AttributeConverter class [" + attributeConverter.getClass() + "] registered multiple times"
+			);
+		}
+	}
+
 
 	// Mappings impl ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -2984,6 +3040,22 @@ public class Configuration implements Serializable {
 			}
 		}
 
+		@Override
+		public AttributeConverterDefinition locateAttributeConverter(Class converterClass) {
+			if ( attributeConverterDefinitionsByClass == null ) {
+				return null;
+			}
+			return attributeConverterDefinitionsByClass.get( converterClass );
+		}
+
+		@Override
+		public java.util.Collection<AttributeConverterDefinition> getAttributeConverters() {
+			if ( attributeConverterDefinitionsByClass == null ) {
+				return Collections.emptyList();
+			}
+			return attributeConverterDefinitionsByClass.values();
+		}
+
 		public void addPropertyReference(String referencedClass, String propertyName) {
 			propertyReferences.add( new PropertyReference( referencedClass, propertyName, false ) );
 		}
@@ -3403,7 +3475,7 @@ public class Configuration implements Serializable {
 
 		private void processHbmXml(XmlDocument metadataXml, Set<String> entityNames) {
 			try {
-				HbmBinder.bindRoot( metadataXml, createMappings(), CollectionHelper.EMPTY_MAP, entityNames );
+				HbmBinder.bindRoot( metadataXml, createMappings(), Collections.EMPTY_MAP, entityNames );
 			}
 			catch ( MappingException me ) {
 				throw new InvalidMappingException(

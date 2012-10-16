@@ -123,8 +123,8 @@ public class HSQLDialect extends Dialect {
 			registerColumnType( Types.CLOB, "longvarchar" );
 		}
 		else {
-			registerColumnType( Types.BLOB, "blob" );
-			registerColumnType( Types.CLOB, "clob" );
+			registerColumnType( Types.BLOB, "blob($l)" );
+			registerColumnType( Types.CLOB, "clob($l)" );
 		}
 
 		// aggregate functions
@@ -705,6 +705,11 @@ public class HSQLDialect extends Dialect {
     }
 
 	public boolean supportsTupleDistinctCounts() {
+		return false;
+	}
+	
+	@Override
+	public boolean supportsNotNullUnique() {
 		return false;
 	}
 }

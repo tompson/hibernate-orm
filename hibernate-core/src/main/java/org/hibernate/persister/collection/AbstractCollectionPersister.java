@@ -47,6 +47,7 @@ import org.hibernate.cache.spi.entry.StructuredCollectionCacheEntry;
 import org.hibernate.cache.spi.entry.StructuredMapCacheEntry;
 import org.hibernate.cache.spi.entry.UnstructuredCacheEntry;
 import org.hibernate.cfg.Configuration;
+import org.hibernate.cfg.NotYetImplementedException;
 import org.hibernate.collection.spi.PersistentCollection;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.jdbc.batch.internal.BasicBatchKey;
@@ -61,7 +62,9 @@ import org.hibernate.engine.spi.SubselectFetch;
 import org.hibernate.exception.spi.SQLExceptionConverter;
 import org.hibernate.id.IdentifierGenerator;
 import org.hibernate.internal.CoreMessageLogger;
+import org.hibernate.internal.FilterAliasGenerator;
 import org.hibernate.internal.FilterHelper;
+import org.hibernate.internal.StaticFilterAliasGenerator;
 import org.hibernate.internal.util.StringHelper;
 import org.hibernate.internal.util.collections.ArrayHelper;
 import org.hibernate.jdbc.Expectation;
@@ -77,13 +80,21 @@ import org.hibernate.mapping.Selectable;
 import org.hibernate.mapping.Table;
 import org.hibernate.metadata.CollectionMetadata;
 import org.hibernate.persister.entity.EntityPersister;
+import org.hibernate.persister.entity.Loadable;
 import org.hibernate.persister.entity.PropertyMapping;
+import org.hibernate.persister.entity.Queryable;
 import org.hibernate.pretty.MessageHelper;
 import org.hibernate.sql.Alias;
 import org.hibernate.sql.SelectFragment;
 import org.hibernate.sql.SimpleSelect;
 import org.hibernate.sql.Template;
 import org.hibernate.sql.ordering.antlr.ColumnMapper;
+import org.hibernate.sql.ordering.antlr.ColumnReference;
+import org.hibernate.sql.ordering.antlr.FormulaReference;
+import org.hibernate.sql.ordering.antlr.OrderByAliasResolver;
+import org.hibernate.sql.ordering.antlr.OrderByFragmentParser;
+import org.hibernate.sql.ordering.antlr.OrderByTranslation;
+import org.hibernate.sql.ordering.antlr.SqlValueReference;
 import org.hibernate.type.CollectionType;
 import org.hibernate.type.CompositeType;
 import org.hibernate.type.EntityType;
@@ -116,11 +127,16 @@ public abstract class AbstractCollectionPersister
 	private final String sqlDetectRowByIndexString;
 	private final String sqlDetectRowByElementString;
 
-	protected final String sqlWhereString;
-	private final String sqlOrderByStringTemplate;
-	private final String sqlWhereStringTemplate;
-	private final boolean hasOrder;
 	protected final boolean hasWhere;
+	protected final String sqlWhereString;
+	private final String sqlWhereStringTemplate;
+
+	private final boolean hasOrder;
+	private final OrderByTranslation orderByTranslation;
+
+	private final boolean hasManyToManyOrder;
+	private final OrderByTranslation manyToManyOrderByTranslation;
+
 	private final int baseIndex;
 
 	private final String nodeName;
@@ -201,9 +217,6 @@ public abstract class AbstractCollectionPersister
 
 	private final String manyToManyWhereString;
 	private final String manyToManyWhereTemplate;
-
-	private final boolean hasManyToManyOrder;
-	private final String manyToManyOrderByTemplate;
 
 	// custom sql
 	private final boolean insertCallable;
@@ -337,7 +350,7 @@ public abstract class AbstractCollectionPersister
 		iter = collection.getElement().getColumnIterator();
 		while ( iter.hasNext() ) {
 			Selectable selectable = (Selectable) iter.next();
-			elementColumnAliases[j] = selectable.getAlias( dialect );
+			elementColumnAliases[j] = selectable.getAlias( dialect, table );
 			if ( selectable.isFormula() ) {
 				Formula form = (Formula) selectable;
 				elementFormulaTemplates[j] = form.getTemplate( dialect, factory.getSqlFunctionRegistry() );
@@ -549,29 +562,23 @@ public abstract class AbstractCollectionPersister
 
 		hasOrder = collection.getOrderBy() != null;
 		if ( hasOrder ) {
-			ColumnMapper mapper = new ColumnMapper() {
-
-				public String[] map(String reference) {
-					return elementPropertyMapping.toColumns( reference );
-				}
-			};
-			sqlOrderByStringTemplate = Template.renderOrderByStringTemplate(
+			orderByTranslation = Template.translateOrderBy(
 					collection.getOrderBy(),
-					mapper,
+					new ColumnMapperImpl(),
 					factory,
 					dialect,
 					factory.getSqlFunctionRegistry()
-					);
+			);
 		}
 		else {
-			sqlOrderByStringTemplate = null;
+			orderByTranslation = null;
 		}
 
 		// Handle any filters applied to this collection
-		filterHelper = new FilterHelper( collection.getFilterMap(), dialect, factory.getSqlFunctionRegistry() );
+		filterHelper = new FilterHelper( collection.getFilters(), factory);
 
 		// Handle any filters applied to this collection for many-to-many
-		manyToManyFilterHelper = new FilterHelper( collection.getManyToManyFilterMap(), dialect, factory.getSqlFunctionRegistry() );
+		manyToManyFilterHelper = new FilterHelper( collection.getManyToManyFilters(), factory);
 		manyToManyWhereString = StringHelper.isNotEmpty( collection.getManyToManyWhere() ) ?
 				"( " + collection.getManyToManyWhere() + ")" :
 				null;
@@ -581,25 +588,74 @@ public abstract class AbstractCollectionPersister
 
 		hasManyToManyOrder = collection.getManyToManyOrdering() != null;
 		if ( hasManyToManyOrder ) {
-			ColumnMapper mapper = new ColumnMapper() {
-
-				public String[] map(String reference) {
-					return elementPropertyMapping.toColumns( reference );
-				}
-			};
-			manyToManyOrderByTemplate = Template.renderOrderByStringTemplate(
+			manyToManyOrderByTranslation = Template.translateOrderBy(
 					collection.getManyToManyOrdering(),
-					mapper,
+					new ColumnMapperImpl(),
 					factory,
 					dialect,
 					factory.getSqlFunctionRegistry()
-					);
+			);
 		}
 		else {
-			manyToManyOrderByTemplate = null;
+			manyToManyOrderByTranslation = null;
 		}
 
 		initCollectionPropertyMap();
+	}
+
+	private class ColumnMapperImpl implements ColumnMapper {
+		@Override
+		public SqlValueReference[] map(String reference) {
+			final String[] columnNames;
+			final String[] formulaTemplates;
+
+			// handle the special "$element$" property name...
+			if ( "$element$".equals( reference ) ) {
+				columnNames = elementColumnNames;
+				formulaTemplates = elementFormulaTemplates;
+			}
+			else {
+				columnNames = elementPropertyMapping.toColumns( reference );
+				formulaTemplates = formulaTemplates( reference, columnNames.length );
+			}
+
+			final SqlValueReference[] result = new SqlValueReference[ columnNames.length ];
+			int i = 0;
+			for ( final String columnName : columnNames ) {
+				if ( columnName == null ) {
+					// if the column name is null, it indicates that this index in the property value mapping is
+					// actually represented by a formula.
+					final int propertyIndex = elementPersister.getEntityMetamodel().getPropertyIndex( reference );
+					final String formulaTemplate = formulaTemplates[i];
+					result[i] = new FormulaReference() {
+						@Override
+						public String getFormulaFragment() {
+							return formulaTemplate;
+						}
+					};
+				}
+				else {
+					result[i] = new ColumnReference() {
+						@Override
+						public String getColumnName() {
+							return columnName;
+						}
+					};
+				}
+				i++;
+			}
+			return result;
+		}
+	}
+
+	private String[] formulaTemplates(String reference, int expectedSize) {
+		try {
+			final int propertyIndex = elementPersister.getEntityMetamodel().getPropertyIndex( reference );
+			return  ( (Queryable) elementPersister ).getSubclassPropertyFormulaTemplateClosure()[propertyIndex];
+		}
+		catch (Exception e) {
+			return new String[expectedSize];
+		}
 	}
 
 	public void postInstantiate() throws MappingException {
@@ -693,13 +749,13 @@ public abstract class AbstractCollectionPersister
 
 	public String getSQLOrderByString(String alias) {
 		return hasOrdering()
-				? StringHelper.replace( sqlOrderByStringTemplate, Template.TEMPLATE, alias )
+				? orderByTranslation.injectAliases( new StandardOrderByAliasResolver( alias ) )
 				: "";
 	}
 
 	public String getManyToManyOrderByString(String alias) {
 		return hasManyToManyOrdering()
-				? StringHelper.replace( manyToManyOrderByTemplate, Template.TEMPLATE, alias )
+				? manyToManyOrderByTranslation.injectAliases( new StandardOrderByAliasResolver( alias ) )
 				: "";
 	}
 
@@ -1490,7 +1546,7 @@ public abstract class AbstractCollectionPersister
 
 	public String getManyToManyFilterFragment(String alias, Map enabledFilters) {
 		StringBuilder buffer = new StringBuilder();
-		manyToManyFilterHelper.render( buffer, alias, enabledFilters );
+		manyToManyFilterHelper.render( buffer, elementPersister.getFilterAliasGenerator(alias), enabledFilters );
 
 		if ( manyToManyWhereString != null ) {
 			buffer.append( " and " )
@@ -1595,7 +1651,7 @@ public abstract class AbstractCollectionPersister
 	public String filterFragment(String alias, Map enabledFilters) throws MappingException {
 
 		StringBuilder sessionFilterFragment = new StringBuilder();
-		filterHelper.render( sessionFilterFragment, alias, enabledFilters );
+		filterHelper.render( sessionFilterFragment, getFilterAliasGenerator(alias), enabledFilters );
 
 		return sessionFilterFragment.append( filterFragment( alias ) ).toString();
 	}
@@ -1856,4 +1912,25 @@ public abstract class AbstractCollectionPersister
 	public CollectionInitializer getInitializer() {
 		return initializer;
 	}
+
+	private class StandardOrderByAliasResolver implements OrderByAliasResolver {
+		private final String rootAlias;
+
+		private StandardOrderByAliasResolver(String rootAlias) {
+			this.rootAlias = rootAlias;
+		}
+
+		@Override
+		public String resolveTableAlias(String columnReference) {
+			if ( elementPersister == null ) {
+				// we have collection of non-entity elements...
+				return rootAlias;
+			}
+			else {
+				return ( (Loadable) elementPersister ).getTableAliasForColumn( columnReference, rootAlias );
+			}
+		}
+	}
+	
+	public abstract FilterAliasGenerator getFilterAliasGenerator(final String rootAlias);
 }

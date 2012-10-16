@@ -52,9 +52,9 @@ import org.hibernate.engine.loading.internal.EntityLoadContext;
 import org.hibernate.engine.spi.CollectionKey;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.id.IntegralDataTypeHolder;
-import org.hibernate.service.jdbc.dialect.internal.AbstractDialectResolver;
-import org.hibernate.service.jndi.JndiException;
-import org.hibernate.service.jndi.JndiNameException;
+import org.hibernate.engine.jdbc.dialect.internal.AbstractDialectResolver;
+import org.hibernate.engine.jndi.JndiException;
+import org.hibernate.engine.jndi.JndiNameException;
 import org.hibernate.type.BasicType;
 import org.hibernate.type.SerializationException;
 import org.hibernate.type.Type;
@@ -343,10 +343,6 @@ public interface CoreMessageLogger extends BasicLogger {
 	@LogMessage(level = INFO)
 	@Message(value = "Fetching database metadata", id = 102)
 	void fetchingDatabaseMetadata();
-
-	@LogMessage(level = WARN)
-	@Message(value = "@Filter not allowed on subclasses (ignored): %s", id = 103)
-	void filterAnnotationOnSubclass(String className);
 
 	@LogMessage(level = WARN)
 	@Message(value = "firstResult/maxResults specified with collection fetch; applying in memory!", id = 104)
@@ -1505,12 +1501,12 @@ public interface CoreMessageLogger extends BasicLogger {
 	@Message(value = "You should set hibernate.transaction.manager_lookup_class if cache is enabled", id = 426)
 	void setManagerLookupClass();
 
-	@LogMessage(level = WARN)
-	@Message(value = "Using deprecated %s strategy [%s], use newer %s strategy instead [%s]", id = 427)
-	void deprecatedTransactionManagerStrategy(String name,
-											  String transactionManagerStrategy,
-											  String name2,
-											  String jtaPlatform);
+//	@LogMessage(level = WARN)
+//	@Message(value = "Using deprecated %s strategy [%s], use newer %s strategy instead [%s]", id = 427)
+//	void deprecatedTransactionManagerStrategy(String name,
+//											  String transactionManagerStrategy,
+//											  String name2,
+//											  String jtaPlatform);
 
 	@LogMessage(level = INFO)
 	@Message(value = "Encountered legacy TransactionManagerLookup specified; convert to newer %s contract specified via %s setting",
@@ -1578,4 +1574,13 @@ public interface CoreMessageLogger extends BasicLogger {
 	@LogMessage(level = INFO)
 	@Message(value = "NaturalId queries executed to database: %s", id = 442)
 	void naturalIdQueriesExecuted(long naturalIdQueriesExecutionCount);
+
+	@LogMessage(level = WARN)
+	@Message(
+			value = "Dialect [%s] limits the number of elements in an IN predicate to %s entries.  " +
+					"However, the given parameter list [%s] contained %s entries, which will likely cause failures " +
+					"to execute the query in the database",
+			id = 443
+	)
+	void tooManyInExpressions(String dialectName, int limit, String paramName, int size);
 }

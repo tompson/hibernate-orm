@@ -40,7 +40,7 @@ import org.hibernate.type.descriptor.sql.TinyIntTypeDescriptor;
  *
  * @author Gavin King
  */
-public class SybaseASE15Dialect extends AbstractTransactSQLDialect {
+public class SybaseASE15Dialect extends SybaseDialect {
 	public SybaseASE15Dialect() {
 		super();
 
@@ -434,4 +434,9 @@ public class SybaseASE15Dialect extends AbstractTransactSQLDialect {
     protected SqlTypeDescriptor getSqlTypeDescriptorOverride(int sqlCode) {
         return sqlCode == Types.BOOLEAN ? TinyIntTypeDescriptor.INSTANCE : super.getSqlTypeDescriptorOverride( sqlCode );
     }
+
+	@Override
+	public boolean supportsLockTimeouts() {
+		return false;
+	}
 }

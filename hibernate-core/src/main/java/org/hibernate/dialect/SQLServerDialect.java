@@ -25,6 +25,7 @@ package org.hibernate.dialect;
 import java.sql.Types;
 
 import org.hibernate.LockMode;
+import org.hibernate.LockOptions;
 import org.hibernate.dialect.function.AnsiTrimEmulationFunction;
 import org.hibernate.dialect.function.SQLFunctionTemplate;
 import org.hibernate.dialect.function.StandardSQLFunction;
@@ -38,6 +39,8 @@ import org.hibernate.type.descriptor.sql.SqlTypeDescriptor;
  * @author Gavin King
  */
 public class SQLServerDialect extends AbstractTransactSQLDialect {
+	
+	private static final int PARAM_LIST_SIZE_LIMIT = 2100;
 
 	public SQLServerDialect() {
 		registerColumnType( Types.VARBINARY, "image" );
@@ -120,18 +123,18 @@ public class SQLServerDialect extends AbstractTransactSQLDialect {
 	}
 
 	@Override
-    public String appendLockHint(LockMode mode, String tableName) {
-		if ( ( mode == LockMode.UPGRADE ) ||
-			  ( mode == LockMode.UPGRADE_NOWAIT ) ||
-			  ( mode == LockMode.PESSIMISTIC_WRITE ) ||
-			  ( mode == LockMode.WRITE ) ) {
-			return tableName + " with (updlock, rowlock)";
-		}
-		else if ( mode == LockMode.PESSIMISTIC_READ ) {
-			return tableName + " with (holdlock, rowlock)";
-		}
-		else {
-			return tableName;
+    public String appendLockHint(LockOptions lockOptions, String tableName) {
+		LockMode mode = lockOptions.getLockMode();
+		switch ( mode ) {
+			case UPGRADE:
+			case UPGRADE_NOWAIT:
+			case PESSIMISTIC_WRITE:
+			case WRITE:
+				return tableName + " with (updlock, rowlock)";
+			case PESSIMISTIC_READ:
+				return tableName + " with (holdlock, rowlock)";
+			default:
+				return tableName;
 		}
 	}
 
@@ -187,5 +190,13 @@ public class SQLServerDialect extends AbstractTransactSQLDialect {
     protected SqlTypeDescriptor getSqlTypeDescriptorOverride( int sqlCode ) {
         return sqlCode == Types.TINYINT ? SmallIntTypeDescriptor.INSTANCE : super.getSqlTypeDescriptorOverride(sqlCode);
     }
+
+	/* (non-Javadoc)
+		 * @see org.hibernate.dialect.Dialect#getInExpressionCountLimit()
+		 */
+	@Override
+	public int getInExpressionCountLimit() {
+		return PARAM_LIST_SIZE_LIMIT;
+	}
 }
 

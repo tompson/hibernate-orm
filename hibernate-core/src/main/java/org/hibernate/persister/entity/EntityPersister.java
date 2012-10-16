@@ -41,6 +41,7 @@ import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.engine.spi.SessionImplementor;
 import org.hibernate.engine.spi.ValueInclusion;
 import org.hibernate.id.IdentifierGenerator;
+import org.hibernate.internal.FilterAliasGenerator;
 import org.hibernate.metadata.ClassMetadata;
 import org.hibernate.tuple.entity.EntityMetamodel;
 import org.hibernate.tuple.entity.EntityTuplizer;
@@ -508,6 +509,8 @@ public interface EntityPersister extends OptimisticCacheSource {
 	public Object[] getDatabaseSnapshot(Serializable id, SessionImplementor session)
 	throws HibernateException;
 
+	public Serializable getIdByUniqueKey(Serializable key, String uniquePropertyName, SessionImplementor session);
+
 	/**
 	 * Get the current version of the object, or return null if there is no row for
 	 * the given identifier. In the case of unversioned data, return any object
@@ -747,4 +750,6 @@ public interface EntityPersister extends OptimisticCacheSource {
 	public EntityTuplizer getEntityTuplizer();
 
 	public EntityInstrumentationMetadata getInstrumentationMetadata();
+	
+	public FilterAliasGenerator getFilterAliasGenerator(final String rootAlias);
 }

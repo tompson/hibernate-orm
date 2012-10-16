@@ -39,8 +39,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
-import org.jboss.logging.Logger;
-
 import org.hibernate.HibernateException;
 import org.hibernate.LockMode;
 import org.hibernate.LockOptions;
@@ -58,7 +56,10 @@ import org.hibernate.dialect.lock.PessimisticForceIncrementLockingStrategy;
 import org.hibernate.dialect.lock.PessimisticReadSelectLockingStrategy;
 import org.hibernate.dialect.lock.PessimisticWriteSelectLockingStrategy;
 import org.hibernate.dialect.lock.SelectLockingStrategy;
+import org.hibernate.dialect.pagination.LegacyLimitHandler;
+import org.hibernate.dialect.pagination.LimitHandler;
 import org.hibernate.engine.jdbc.LobCreator;
+import org.hibernate.engine.spi.RowSelection;
 import org.hibernate.engine.spi.SessionImplementor;
 import org.hibernate.exception.spi.ConversionContext;
 import org.hibernate.exception.spi.SQLExceptionConversionDelegate;
@@ -80,9 +81,9 @@ import org.hibernate.sql.CaseFragment;
 import org.hibernate.sql.ForUpdateFragment;
 import org.hibernate.sql.JoinFragment;
 import org.hibernate.type.StandardBasicTypes;
-import org.hibernate.type.descriptor.sql.BlobTypeDescriptor;
 import org.hibernate.type.descriptor.sql.ClobTypeDescriptor;
 import org.hibernate.type.descriptor.sql.SqlTypeDescriptor;
+import org.jboss.logging.Logger;
 
 /**
  * Represents a dialect of SQL implemented by a particular RDBMS.
@@ -375,10 +376,6 @@ public abstract class Dialect implements ConversionContext {
 	protected SqlTypeDescriptor getSqlTypeDescriptorOverride(int sqlCode) {
 		SqlTypeDescriptor descriptor;
 		switch ( sqlCode ) {
-			case Types.BLOB: {
-				descriptor = useInputStreamToInsertBlob() ? BlobTypeDescriptor.STREAM_BINDING : null;
-				break;
-			}
 			case Types.CLOB: {
 				descriptor = useInputStreamToInsertBlob() ? ClobTypeDescriptor.STREAM_BINDING : null;
 				break;
@@ -935,7 +932,9 @@ public abstract class Dialect implements ConversionContext {
 	 * via a SQL clause?
 	 *
 	 * @return True if this dialect supports some form of LIMIT.
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean supportsLimit() {
 		return false;
 	}
@@ -945,7 +944,9 @@ public abstract class Dialect implements ConversionContext {
 	 * support specifying an offset?
 	 *
 	 * @return True if the dialect supports an offset within the limit support.
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean supportsLimitOffset() {
 		return supportsLimit();
 	}
@@ -955,7 +956,9 @@ public abstract class Dialect implements ConversionContext {
 	 * parameters) for its limit/offset?
 	 *
 	 * @return True if bind variables can be used; false otherwise.
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean supportsVariableLimit() {
 		return supportsLimit();
 	}
@@ -965,7 +968,9 @@ public abstract class Dialect implements ConversionContext {
 	 * Does this dialect require us to bind the parameters in reverse order?
 	 *
 	 * @return true if the correct order is limit, offset
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean bindLimitParametersInReverseOrder() {
 		return false;
 	}
@@ -975,7 +980,9 @@ public abstract class Dialect implements ConversionContext {
 	 * <tt>SELECT</tt> statement, rather than at the end?
 	 *
 	 * @return true if limit parameters should come before other parameters
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean bindLimitParametersFirst() {
 		return false;
 	}
@@ -995,7 +1002,9 @@ public abstract class Dialect implements ConversionContext {
 	 * So essentially, is limit relative from offset?  Or is limit absolute?
 	 *
 	 * @return True if limit is relative from offset; false otherwise.
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean useMaxForLimit() {
 		return false;
 	}
@@ -1005,7 +1014,9 @@ public abstract class Dialect implements ConversionContext {
 	 * to the SQL query.  This option forces that the limit be written to the SQL query.
 	 *
 	 * @return True to force limit into SQL query even if none specified in Hibernate query; false otherwise.
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public boolean forceLimitUsage() {
 		return false;
 	}
@@ -1017,7 +1028,9 @@ public abstract class Dialect implements ConversionContext {
 	 * @param offset The offset of the limit
 	 * @param limit The limit of the limit ;)
 	 * @return The modified query statement with the limit applied.
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public String getLimitString(String query, int offset, int limit) {
 		return getLimitString( query, ( offset > 0 || forceLimitUsage() )  );
 	}
@@ -1038,7 +1051,9 @@ public abstract class Dialect implements ConversionContext {
 	 * @param query The query to which to apply the limit.
 	 * @param hasOffset Is the query requesting an offset?
 	 * @return the modified SQL
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	protected String getLimitString(String query, boolean hasOffset) {
 		throw new UnsupportedOperationException( "Paged queries not supported by " + getClass().getName());
 	}
@@ -1052,14 +1067,25 @@ public abstract class Dialect implements ConversionContext {
 	 * to injecting the limit values into the SQL string.
 	 *
 	 * @param zeroBasedFirstResult The user-supplied, zero-based first row offset.
-	 *
 	 * @return The corresponding db/dialect specific offset.
-	 *
 	 * @see org.hibernate.Query#setFirstResult
 	 * @see org.hibernate.Criteria#setFirstResult
+	 * @deprecated {@link #buildLimitHandler(String, RowSelection)} should be overridden instead.
 	 */
+	@Deprecated
 	public int convertToFirstRowValue(int zeroBasedFirstResult) {
 		return zeroBasedFirstResult;
+	}
+
+	/**
+	 * Build delegate managing LIMIT clause.
+	 *
+	 * @param sql SQL query.
+	 * @param selection Selection criteria. {@code null} in case of unlimited number of rows.
+	 * @return LIMIT clause delegate.
+	 */
+	public LimitHandler buildLimitHandler(String sql, RowSelection selection) {
+		return new LegacyLimitHandler( this, sql, selection );
 	}
 
 
@@ -1281,8 +1307,23 @@ public abstract class Dialect implements ConversionContext {
 	 * @param mode The lock mode to apply
 	 * @param tableName The name of the table to which to apply the lock hint.
 	 * @return The table with any required lock hints.
+	 * @deprecated use {@code appendLockHint(LockOptions,String)} instead
 	 */
+	@Deprecated
 	public String appendLockHint(LockMode mode, String tableName) {
+		return appendLockHint( new LockOptions( mode ), tableName );
+	}
+	/**
+	 * Some dialects support an alternative means to <tt>SELECT FOR UPDATE</tt>,
+	 * whereby a "lock hint" is appends to the table name in the from clause.
+	 * <p/>
+	 * contributed by <a href="http://sourceforge.net/users/heschulz">Helge Schulz</a>
+	 *
+	 * @param lockOptions The lock options to apply
+	 * @param tableName The name of the table to which to apply the lock hint.
+	 * @return The table with any required lock hints.
+	 */
+	public String appendLockHint(LockOptions lockOptions, String tableName){
 		return tableName;
 	}
 
@@ -1419,20 +1460,41 @@ public abstract class Dialect implements ConversionContext {
 	// callable statement support ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 	/**
-	 * Registers an OUT parameter which will be returning a
-	 * {@link java.sql.ResultSet}.  How this is accomplished varies greatly
-	 * from DB to DB, hence its inclusion (along with {@link #getResultSet}) here.
+	 * Registers a parameter (either OUT, or the new REF_CURSOR param type available in Java 8) capable of
+	 * returning {@link java.sql.ResultSet} *by position*.  Pre-Java 8, registering such ResultSet-returning
+	 * parameters varied greatly across database and drivers; hence its inclusion as part of the Dialect contract.
 	 *
 	 * @param statement The callable statement.
-	 * @param position The bind position at which to register the OUT param.
+	 * @param position The bind position at which to register the output param.
+	 *
 	 * @return The number of (contiguous) bind positions used.
-	 * @throws SQLException Indicates problems registering the OUT param.
+	 *
+	 * @throws SQLException Indicates problems registering the param.
 	 */
 	public int registerResultSetOutParameter(CallableStatement statement, int position) throws SQLException {
 		throw new UnsupportedOperationException(
 				getClass().getName() +
 				" does not support resultsets via stored procedures"
 			);
+	}
+
+	/**
+	 * Registers a parameter (either OUT, or the new REF_CURSOR param type available in Java 8) capable of
+	 * returning {@link java.sql.ResultSet} *by name*.  Pre-Java 8, registering such ResultSet-returning
+	 * parameters varied greatly across database and drivers; hence its inclusion as part of the Dialect contract.
+	 *
+	 * @param statement The callable statement.
+	 * @param name The parameter name (for drivers which support named parameters).
+	 *
+	 * @return The number of (contiguous) bind positions used.
+	 *
+	 * @throws SQLException Indicates problems registering the param.
+	 */
+	public int registerResultSetOutParameter(CallableStatement statement, String name) throws SQLException {
+		throw new UnsupportedOperationException(
+				getClass().getName() +
+						" does not support resultsets via stored procedures"
+		);
 	}
 
 	/**
@@ -1448,6 +1510,42 @@ public abstract class Dialect implements ConversionContext {
 				getClass().getName() +
 				" does not support resultsets via stored procedures"
 			);
+	}
+
+	/**
+	 * Given a callable statement previously processed by {@link #registerResultSetOutParameter},
+	 * extract the {@link java.sql.ResultSet}.
+	 *
+	 * @param statement The callable statement.
+	 * @param position The bind position at which to register the output param.
+	 *
+	 * @return The extracted result set.
+	 *
+	 * @throws SQLException Indicates problems extracting the result set.
+	 */
+	public ResultSet getResultSet(CallableStatement statement, int position) throws SQLException {
+		throw new UnsupportedOperationException(
+				getClass().getName() +
+						" does not support resultsets via stored procedures"
+		);
+	}
+
+	/**
+	 * Given a callable statement previously processed by {@link #registerResultSetOutParameter},
+	 * extract the {@link java.sql.ResultSet} from the OUT parameter.
+	 *
+	 * @param statement The callable statement.
+	 * @param name The parameter name (for drivers which support named parameters).
+	 *
+	 * @return The extracted result set.
+	 *
+	 * @throws SQLException Indicates problems extracting the result set.
+	 */
+	public ResultSet getResultSet(CallableStatement statement, String name) throws SQLException {
+		throw new UnsupportedOperationException(
+				getClass().getName() +
+						" does not support resultsets via stored procedures"
+		);
 	}
 
 	// current timestamp support ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1739,6 +1837,28 @@ public abstract class Dialect implements ConversionContext {
 
 
 	// DDL support ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+	/**
+	 * Get the SQL command used to create the named schema
+	 *
+	 * @param schemaName The name of the schema to be created.
+	 *
+	 * @return The creation command
+	 */
+	public String getCreateSchemaCommand(String schemaName) {
+		return "create schema " + schemaName;
+	}
+
+	/**
+	 * Get the SQL command used to drop the named schema
+	 *
+	 * @param schemaName The name of the schema to be dropped.
+	 *
+	 * @return The drop command
+	 */
+	public String getDropSchemaCommand(String schemaName) {
+		return "drop schema " + schemaName;
+	}
 
 	/**
 	 * Does this dialect support the <tt>ALTER TABLE</tt> syntax?
@@ -2238,5 +2358,26 @@ public abstract class Dialect implements ConversionContext {
 	public boolean supportsTupleDistinctCounts() {
 		// oddly most database in fact seem to, so true is the default.
 		return true;
+	}
+
+	/**
+	 * Return the limit that the underlying database places on the number elements in an {@code IN} predicate.
+	 * If the database defines no such limits, simply return zero or less-than-zero.
+	 * 
+	 * @return int The limit, or zero-or-less to indicate no limit.
+	 */
+	public int getInExpressionCountLimit() {
+		return 0;
+	}
+	
+	/**
+	 * HHH-4635
+	 * Oracle expects all Lob values to be last in inserts and updates.
+	 * 
+	 * @return boolean True of Lob values should be last, false if it
+	 * does not matter.
+	 */
+	public boolean forceLobAsLastValue() {
+		return false;
 	}
 }

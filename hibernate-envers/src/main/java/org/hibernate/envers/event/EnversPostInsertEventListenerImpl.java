@@ -29,6 +29,7 @@ import org.hibernate.envers.synchronization.work.AddWorkUnit;
 import org.hibernate.envers.synchronization.work.AuditWorkUnit;
 import org.hibernate.event.spi.PostInsertEvent;
 import org.hibernate.event.spi.PostInsertEventListener;
+import org.hibernate.persister.entity.EntityPersister;
 
 /**
  * @author Adam Warski (adam at warski dot org)
@@ -44,6 +45,8 @@ public class EnversPostInsertEventListenerImpl extends BaseEnversEventListener i
         String entityName = event.getPersister().getEntityName();
 
         if ( getAuditConfiguration().getEntCfg().isVersioned( entityName ) ) {
+            checkIfTransactionInProgress(event.getSession());
+
             AuditProcess auditProcess = getAuditConfiguration().getSyncManager().get(event.getSession());
 
             AuditWorkUnit workUnit = new AddWorkUnit(
@@ -67,5 +70,10 @@ public class EnversPostInsertEventListenerImpl extends BaseEnversEventListener i
 				);
             }
         }
+	}
+
+	@Override
+	public boolean requiresPostCommitHanding(EntityPersister persister) {
+		return getAuditConfiguration().getEntCfg().isVersioned( persister.getEntityName() );
 	}
 }

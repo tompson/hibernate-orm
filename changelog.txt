@@ -5,6 +5,81 @@ match the actual issue resolution (i.e. a bug might not be a bug). Please
 refer to the particular case on JIRA using the issue tracking number to learn
 more about each case.
 
+Changes in version 4.1.5.SP1 (2012.07.12)
+------------------------------------------------------------------------------------------------------------------------
+
+** Bug
+    * [HHH-7447] - ValueHolder used in NaturalIdCacheKey is not Serializable
+** Improvement
+    * [HHH-2394] - Support filter tag in subclass
+
+Changes in version 4.1.5.Final (2012.07.12)
+------------------------------------------------------------------------------------------------------------------------
+https://hibernate.onjira.com/browse/HHH/fixforversion/12150
+
+** Bug
+    * [HHH-5411] - Missing value in not updatable column in Envers audit table
+    * [HHH-5565] - Memory leak is possible if changes for audited entities are outside of transaction
+    * [HHH-5929] - PooledLoOptimizer in conjunction with SequenceStyleGenerator is not thread-safe
+    * [HHH-6304] - Error "Cannot create TypedQuery for query with more than one return" with named queries
+    * [HHH-6707] - One-to-One mapping with foreign key in target table and foreign key being the primary key fails with Oracle
+    * [HHH-6896] - Metamodel.managedType(...) implemented incorrectly
+    * [HHH-7310] - Resolution of types registered in type registry does not work properly for Properties of @Embeddable types
+    * [HHH-7311] - NullPointerException if TenantConnectionProvider class does not exist
+    * [HHH-7368] - SQLServer2005Dialect: pagination query fails if terminating with a semicolon
+    * [HHH-7369] - SQLServer2005Dialect: scalar query fails with pagination
+    * [HHH-7374] - Support KEY, ENTRY and VALUE qualifiers in WHERE clause
+    * [HHH-7380] - bug when initialize MULTI_TENANT_IDENTIFIER_RESOLVER and CUSTOM_ENTITY_DIRTINESS_STRATEGY
+    * [HHH-7426] - Setting cacheable="true" in orm.xml does not enable caching of entity in 2lc
+** Improvement
+    * [HHH-4394] - @OrderBy usage on a joined classes (when using join table) produces incorred SQL syntax.
+    * [HHH-7370] - SQLServer2005Dialect: sql-transformation to common_table_expression not needed when offset = 0
+    * [HHH-7381] - Refact: split CacheImpl from SessionFactoryImpl into a session factory scope service
+    * [HHH-7382] - refact: unify the configuration implementation loading strategy
+    * [HHH-7431] - Reduce NaturalIdCacheKey Memory Footprint
+** Task
+    * [HHH-7440] - Redesign dialect-specific LIMIT clause appliance
+    * [HHH-7442] - rename org.hibernate.internal.util.Value
+
+Changes in version 4.1.4.Final (2012.05.30)
+------------------------------------------------------------------------------------------------------------------------
+https://hibernate.onjira.com/browse/HHH/fixforversion/11960
+
+** Bug
+    * [HHH-2214] - SQLStateConverter chooses wrong JDBCException: Locks and MySQL
+    * [HHH-5396] - JPQL KEY(), ENTRY() and VALUE() does not recognize alias refs
+    * [HHH-6256] - persistence.xml-specified javax.persistence.lock.timeout is ignored
+    * [HHH-6310] - SQLServer2005Dialect produced select statement with a distinct keyword within an aggregate function does not work
+    * [HHH-6329] - Apparently inaccurate 'java.lang.UnsupportedOperationException: Illegal attempt to edit read only item' when using SQLQuery.executeUpdate
+    * [HHH-6728] - SQLServer2005Dialect - Paging doesn't work with UPPERCASE colums in a case sensitive database
+    * [HHH-6950] - Bogus string replacement in SQLServer2005Dialect.insertRowNumberFunction()
+    * [HHH-6960] - NullPointerException in PreCollectionRemove Listener
+    * [HHH-7019] - SQLServer2005Dialect, SQLServer2008Dialect issues with subqueries
+    * [HHH-7074] - the replacement annotations of @Entity are not working
+    * [HHH-7107] - org.hibernate.test.locking.LockModeTest hangs on Sybase 15.5 and DB2-97
+    * [HHH-7112] - session.clear does not clear StatefulPersistenceContext.naturalIdResolutionCacheMap
+    * [HHH-7198] - SQLServer2005Dialect.getLimitString turns tablenames to lowercase ->  SQLGrammarException: when mapping tables with capital letters
+    * [HHH-7285] - Using distinct in Criteria, using first- and maxResults, fails with SQLGrammarException when a colum in the distinct clause starts with 'from'
+    * [HHH-7294] - Envers manytomany Test BasicSametable fails on DB2 as DB2 does not support tinyint
+    * [HHH-7295] - ParentAuditing Test in Envers Testsuite fails across different databases with different error messages because Hibernate does not set LockMode correctly
+    * [HHH-7316] - Collection removal actions added by DefaultAutoFlushEventListener.onAutoFlush() are not removed when flush is not needed
+    * [HHH-7317] - Boolean values bound to parameters in SQL predicate cause failures using DB2 with deferPrepares = true
+    * [HHH-7323] - SQLServerDialectTest.testMaxResultsSqlServerWithCaseSensitiveCollation fails on mssql2008R1 and mssql2008R2 due to Lock request TimeOut period exceeded
+    * [HHH-7346] - Tests fail on Postgresql due to failure in typecasts
+    * [HHH-7347] - fail test if it runs longer than 30 minutes to prevent hangs
+    * [HHH-7348] - AbstractMultiTenantConnectionProvider not closing connections
+    * [HHH-7350] - read-only entities can not be deleted from 2LC
+
+** Improvement
+    * [HHH-3961] - SQLServerDialect, support nowait in LockMode.UPGRADE_NOWAIT
+    * [HHH-5881] - Add getter for "namedParameters" to QueryKey
+    * [HHH-6846] - Support for Query.setHint(javax.persistence.lock.timeout)
+    * [HHH-7356] - javax.persistence.lock.timeout hint is ignored by @NamedQuery
+
+** New Feature
+    * [HHH-7306] - Allow use of CurrentTenantIdentifierResolver in normal session opening
+
+
 Changes in version 4.1.3.Final (2012.05.02)
 ------------------------------------------------------------------------------------------------------------------------
 https://hibernate.onjira.com/browse/HHH/fixforversion/11959
@@ -181,7 +256,7 @@ https://hibernate.onjira.com/browse/HHH/fixforversion/11223
 ** Task
     * [HHH-6082] - Incorporate EntityManager documentation into main dev guide
     * [HHH-6336] - Add TenantIdentifierResolver
-    * [HHH-6656] - Document org.hibernate.service.classloading.spi.ClassLoaderService
+    * [HHH-6656] - Document org.hibernate.boot.registry.classloading.spi.ClassLoaderService
     * [HHH-6966] - Re apply HHH-6782
     * [HHH-6985] - Change up tests for PostgreSQL LockMode issues
     * [HHH-7011] - Document multi-tenancy
